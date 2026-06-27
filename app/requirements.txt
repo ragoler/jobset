@@ -1,0 +1,6 @@
+# The controller (FastAPI) deps. The leader/worker roles are pure stdlib (http
+# server + urllib + random), so they add nothing here. One image, three roles.
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+pydantic==2.10.4
+kubernetes==31.0.0

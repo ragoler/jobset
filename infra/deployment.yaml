@@ -1,0 +1,55 @@
+# The controller = the demo's control + data-plane API (creates the JobSet, reads
+# the leader's π, kills workers). The Hub polls this Deployment (name must equal
+# feature.yaml `deployment_name`) for readiness.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: jobset-controller-deployment
+  namespace: ${NAMESPACE}
+  labels:
+    app: jobset-controller
+spec:
+  replicas: 1
+  progressDeadlineSeconds: 600
+  selector:
+    matchLabels:
+      app: jobset-controller
+  template:
+    metadata:
+      labels:
+        app: jobset-controller
+    spec:
+      serviceAccountName: jobset-controller
+      containers:
+        - name: controller
+          image: ${JOBSET_IMAGE}
+          # Stable per-cluster tag is reused across builds; Always makes a rebuild
+          # actually get pulled instead of using the node's cached image.
+          imagePullPolicy: Always
+          command: ["uvicorn", "controller:app", "--host", "0.0.0.0", "--port", "8000"]
+          ports:
+            - containerPort: 8000
+          env:
+            # The image the controller stamps into the JobSet leader/worker pods.
+            # Same image as this controller, so all roles run identical code.
+            - name: JOBSET_IMAGE
+              value: "${JOBSET_IMAGE}"
+            - name: JOBSET_NAME
+              value: "pi-estimator"
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+          startupProbe:
+            httpGet: { path: /healthz, port: 8000 }
+            periodSeconds: 5
+            failureThreshold: 60
+          readinessProbe:
+            httpGet: { path: /healthz, port: 8000 }
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /healthz, port: 8000 }
+            periodSeconds: 15
+          resources:
+            requests: { cpu: "250m", memory: 256Mi }
+            limits: { cpu: "1", memory: 1Gi }

@@ -1,0 +1,21 @@
+# Cluster-scoped prerequisites for the jobset feature, installed once per cluster.
+#
+# The Hub discovers a TOP-LEVEL kustomization.yaml in cluster_dir and runs
+# `kubectl apply --server-side --force-conflicts -k cluster/` at bootstrap
+# (build_infra.sh). The standalone setup_infra.sh applies this same directory, so
+# the two paths never drift.
+#
+# Composed here so a single apply installs everything cluster-once:
+#   - jobset-operator/       -> the JobSet operator + CRDs (remote bundle, pinned).
+#                               The released manifest ALREADY contains the
+#                               jobset-system Namespace, so we do NOT ship our own
+#                               (a duplicate Namespace resource id makes kustomize
+#                               fail with "already registered id").
+#   - cpu-computeclass.yaml  -> the Spot CPU ComputeClass the worker/leader pods
+#                               schedule onto (node auto-creation)
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - jobset-operator
+  - cpu-computeclass.yaml

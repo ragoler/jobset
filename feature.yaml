@@ -1,0 +1,52 @@
+# Showcase feature descriptor — see gke_all /feature.md for the full contract.
+name: jobset
+title: Coordinated Batch Jobs with JobSet
+description: >-
+  Run a distributed Monte Carlo π estimation as a single JobSet — one leader pod
+  aggregating partial results from N worker pods that start together (gang
+  scheduling). Watch the live π estimate converge, then kill a worker and see
+  JobSet's signature behavior: the WHOLE group restarts.
+gke_features:
+  - JobSet API (gang/coordinated startup)
+  - Whole-group restart on pod failure
+  - Stable pod DNS (headless service)
+  - Spot VMs / ComputeClass
+
+paths:
+  infra_dir: infra
+  cluster_dir: cluster
+  frontend_dir: frontend
+  playroom_slug: jobset
+
+# Hub polls this Deployment for readiness (ready_replicas == replicas).
+deployment_name: jobset-controller-deployment
+gateway:
+  # Modern class -> a DEDICATED external LB per Gateway (matches ray; the classic
+  # gke-l7-gxlb shares one LB per cluster and collides with other features).
+  name: jobset-gw
+  class: gke-l7-global-external-managed
+
+# Single image whose role (controller | leader | worker) is chosen by an arg/env.
+# One image keeps the Monte Carlo code identical across the leader and workers,
+# and lets the controller share the same code for spec construction.
+build:
+  # Context is the feature root so the image can also bake in frontend/ (for
+  # standalone UI serving); the Dockerfile copies app/ and frontend/.
+  - image: jobset-pi
+    context: .
+    dockerfile: app/Dockerfile
+
+template_vars:
+  - NAMESPACE
+  - PROJECT_NAME
+  - REGION
+  - ARTIFACT_REGISTRY_REPO
+
+# Values the Hub does not supply. Standalone defaults; Hub-standard vars win.
+template_defaults:
+  NAMESPACE: default
+  # Image reference assembled from Hub-standard vars; overridable standalone.
+  JOBSET_IMAGE: "${REGION}-docker.pkg.dev/${PROJECT_NAME}/${ARTIFACT_REGISTRY_REPO}/jobset-pi:latest"
+
+# This feature's own data-plane router, mounted by the Hub at /api/features/jobset.
+hub_router: "hub_router:router"

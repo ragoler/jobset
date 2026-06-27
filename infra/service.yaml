@@ -1,0 +1,38 @@
+# Stable Service name shared by the HTTPRoute backend and any hub_router target.
+apiVersion: v1
+kind: Service
+metadata:
+  name: jobset-controller
+  namespace: ${NAMESPACE}
+  labels:
+    app: jobset-controller
+spec:
+  selector:
+    app: jobset-controller
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8000
+---
+# Lets the CONTROLLER (not a JobSet pod) reach the leader by a stable name to read
+# the live π. It selects the JobSet leader pod via JobSet's own pod labels (the
+# replicatedJob named "leader"). The JobSet operator also creates its own headless
+# service for pod-to-pod DNS (workers -> leader); this Service is purely for the
+# controller's in-cluster read path. publishNotReadyAddresses so the controller can
+# read partials before the leader Job reports Ready.
+apiVersion: v1
+kind: Service
+metadata:
+  name: jobset-leader
+  namespace: ${NAMESPACE}
+  labels:
+    app: jobset-leader
+spec:
+  publishNotReadyAddresses: true
+  selector:
+    jobset.sigs.k8s.io/jobset-name: pi-estimator
+    jobset.sigs.k8s.io/replicatedjob-name: leader
+  ports:
+    - name: http
+      port: 9000
+      targetPort: 9000

@@ -1,0 +1,13 @@
+# Keep the build context small — only app/ and frontend/ are needed.
+.git
+.gitignore
+.env
+.env_*
+.venv
+venv
+__pycache__
+*.pyc
+.pytest_cache
+tests
+*.md
+.DS_Store

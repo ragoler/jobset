@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>JobSet π Estimator — Coordinated Batch on GKE</title>
+  <link rel="stylesheet" href="/static/features/jobset/style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo">π</span>
+      <div>
+        <h1>JobSet π Estimator</h1>
+        <p class="subtitle">Coordinated multi-pod Monte Carlo on the JobSet API · GKE</p>
+      </div>
+    </div>
+    <div class="topbar-right">
+      <span id="mode-badge" class="badge badge-mock">…</span>
+    </div>
+  </header>
+
+  <main class="layout">
+    <!-- Controls --------------------------------------------------------- -->
+    <section class="panel controls">
+      <h2>Launch</h2>
+
+      <label>Workers
+        <select id="workers">
+          <option value="2">2 workers</option>
+          <option value="4" selected>4 workers</option>
+          <option value="6">6 workers</option>
+          <option value="8">8 workers</option>
+        </select>
+        <small class="field-note">Each worker is one pod sampling its own
+          independent stream. All pods (workers + leader) start together —
+          JobSet's gang/coordinated startup.</small>
+      </label>
+
+      <label>Total samples (darts)
+        <select id="samples">
+          <option value="2000000">2 million</option>
+          <option value="20000000" selected>20 million</option>
+          <option value="100000000">100 million</option>
+          <option value="500000000">500 million</option>
+        </select>
+        <small class="field-note">Split evenly across the workers. More darts =
+          a tighter π estimate and more CPU work.</small>
+      </label>
+
+      <button id="launch" class="btn btn-primary">Launch JobSet</button>
+      <button id="kill" class="btn btn-danger" disabled>Kill a worker</button>
+      <button id="clear" class="btn btn-ghost" disabled>Clear</button>
+
+      <details class="how">
+        <summary>How it works</summary>
+        <ol>
+          <li>The controller creates one <b>JobSet</b> with two replicatedJobs: a
+            <b>leader</b> (1 pod) and <b>workers</b> (N pods). JobSet starts them
+            <b>together</b> (gang scheduling).</li>
+          <li>Each <b>worker</b> runs <b>real Monte Carlo sampling</b> and streams
+            its partial counts to the leader over the <b>stable JobSet pod DNS</b>
+            (a headless service).</li>
+          <li>The <b>leader</b> aggregates all partials into a live running
+            estimate: <b>π = 4 × inside / total</b>.</li>
+          <li><b>Kill a worker</b> deletes one worker pod. JobSet's failurePolicy
+            recreates <b>all</b> child Jobs — the <b>whole group restarts</b>.</li>
+        </ol>
+      </details>
+    </section>
+
+    <!-- π readout -------------------------------------------------------- -->
+    <section class="panel estimate">
+      <h2>Estimate <span id="phase" class="muted"></span></h2>
+      <div class="pi-readout">
+        <div class="pi-value" id="pi-value">—</div>
+        <div class="pi-error" id="pi-error"></div>
+      </div>
+      <div class="progress-track"><div class="progress-bar" id="progress-bar"></div></div>
+      <ul class="stats">
+        <li><span>Samples</span><b id="stat-samples">0 / 0</b></li>
+        <li><span>Inside circle</span><b id="stat-inside">0</b></li>
+        <li><span>JobSet restarts</span><b id="stat-restarts">0</b></li>
+        <li><span>Elapsed</span><b id="stat-elapsed">0.0 s</b></li>
+      </ul>
+    </section>
+
+    <!-- Topology --------------------------------------------------------- -->
+    <section class="panel topo">
+      <h2>JobSet topology <span id="pod-count" class="muted"></span></h2>
+      <div id="pods" class="pods">
+        <p class="empty" id="pods-empty">No JobSet running. Hit <b>Launch</b>.</p>
+      </div>
+    </section>
+  </main>
+
+  <script src="/static/features/jobset/app.js"></script>
+</body>
+</html>

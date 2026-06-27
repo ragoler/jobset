@@ -1,0 +1,47 @@
+# RBAC for the controller: create/inspect JobSets, list/delete pods (status +
+# kill-worker), read pod logs, and manage the leader Service. Namespaced (no
+# hardcoded "default"); the Hub rewrites the namespace + binding subject. The
+# admin SA may bind/escalate, so shipping RBAC is fine.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: jobset-controller
+  namespace: ${NAMESPACE}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: jobset-controller-role
+  namespace: ${NAMESPACE}
+rules:
+  # The controller creates/inspects/clears the JobSet CR.
+  - apiGroups: ["jobset.x-k8s.io"]
+    resources: ["jobsets"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # JobSet creates child Jobs; the controller may inspect them for status.
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # Per-pod status (node/phase/start-time), the kill-worker delete, and logs.
+  - apiGroups: [""]
+    resources: ["pods", "pods/log"]
+    verbs: ["get", "list", "watch", "delete"]
+  # The leader Service the controller reads π through (shipped in infra/, but the
+  # controller may also reconcile it).
+  - apiGroups: [""]
+    resources: ["services"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: jobset-controller-role
+  namespace: ${NAMESPACE}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: jobset-controller-role
+subjects:
+  - kind: ServiceAccount
+    name: jobset-controller
+    namespace: ${NAMESPACE}

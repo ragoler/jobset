@@ -1,0 +1,20 @@
+# JobSet operator + CRDs, pinned to a release. Because this directory has a
+# kustomization.yaml, the Hub installs it with `kubectl apply --server-side -k` at
+# bootstrap (build_infra.sh), once per cluster. The operator is cluster-scoped and
+# watches JobSet CRs across all feature namespaces — it is NOT deployed per feature.
+#
+# We pull the released, flat install manifest (manifests.yaml) rather than
+# config/default. The release manifest bundles the CRDs, the controller Deployment,
+# RBAC, the validating/mutating webhooks AND a self-managed internal certificate
+# (config/components/internalcert), so the operator installs with NO cert-manager
+# dependency. config/default would additionally need the webhook cert wiring sorted
+# out at apply time; the released manifest is the canonical, self-contained install.
+#
+# Pinned to v0.12.0 (latest stable as of 2026-05; verify newer tags with
+# `gh release list -R kubernetes-sigs/jobset`). The CR apiVersion is
+# jobset.x-k8s.io/v1alpha2.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - "https://github.com/kubernetes-sigs/jobset/releases/download/v0.12.0/manifests.yaml"
