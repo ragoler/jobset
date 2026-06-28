@@ -131,3 +131,17 @@ body {
 .pright { text-align: right; flex: 0 0 auto; }
 .pstatus { display: block; font-size: 12px; font-weight: 600; }
 .page { display: block; font-size: 11px; color: var(--muted); margin-top: 2px; }
+.pod-kill {
+  flex: 0 0 auto;
+  background: transparent;
+  border: 1px solid var(--danger);
+  color: var(--danger);
+  font-weight: 600;
+  font-size: 11px;
+  border-radius: 6px;
+  padding: 4px 9px;
+  cursor: pointer;
+  transition: background .15s, color .15s;
+}
+.pod-kill:hover:not(:disabled) { background: var(--danger); color: #1a0606; }
+.pod-kill:disabled { opacity: .5; cursor: not-allowed; }

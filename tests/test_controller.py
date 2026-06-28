@@ -88,6 +88,46 @@ def test_kill_worker_409_when_none(client):
     assert r.status_code == 409
 
 
+def test_kill_worker_targets_a_named_pod(client):
+    """?pod=<name> kills exactly that worker (the UI's per-pod button)."""
+    core, custom = mock.MagicMock(), mock.MagicMock()
+    pods = mock.MagicMock()
+    pods.items = [
+        _fake_pod("pi-estimator-workers-0-abc", "workers"),
+        _fake_pod("pi-estimator-workers-1-def", "workers"),
+    ]
+    core.list_namespaced_pod.return_value = pods
+    with mock.patch.object(controller, "_k8s", return_value=(core, custom)):
+        r = client.post("/kill-worker?pod=pi-estimator-workers-1-def")
+    assert r.status_code == 200
+    assert r.json()["killed"] == "pi-estimator-workers-1-def"
+    name = core.delete_namespaced_pod.call_args[0][0]
+    assert name == "pi-estimator-workers-1-def"
+
+
+def test_kill_worker_404_for_unknown_pod(client):
+    core, custom = mock.MagicMock(), mock.MagicMock()
+    pods = mock.MagicMock()
+    pods.items = [_fake_pod("pi-estimator-workers-0-abc", "workers")]
+    core.list_namespaced_pod.return_value = pods
+    with mock.patch.object(controller, "_k8s", return_value=(core, custom)):
+        r = client.post("/kill-worker?pod=does-not-exist")
+    assert r.status_code == 404
+    core.delete_namespaced_pod.assert_not_called()
+
+
+def test_kill_worker_409_for_finished_pod(client):
+    """A Succeeded worker has no pod to kill -> 409, not a silent no-op."""
+    core, custom = mock.MagicMock(), mock.MagicMock()
+    pods = mock.MagicMock()
+    pods.items = [_fake_pod("pi-estimator-workers-0-abc", "workers", phase="Succeeded")]
+    core.list_namespaced_pod.return_value = pods
+    with mock.patch.object(controller, "_k8s", return_value=(core, custom)):
+        r = client.post("/kill-worker?pod=pi-estimator-workers-0-abc")
+    assert r.status_code == 409
+    core.delete_namespaced_pod.assert_not_called()
+
+
 def test_pi_reports_unavailable_when_leader_unreachable(client):
     # No real leader -> honest empty (available: false), never a fabricated π.
     with mock.patch.object(controller.urllib.request, "urlopen",

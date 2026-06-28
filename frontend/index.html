@@ -51,8 +51,9 @@
       </label>
 
       <button id="launch" class="btn btn-primary">Launch JobSet</button>
-      <button id="kill" class="btn btn-danger" disabled>Kill a worker</button>
       <button id="clear" class="btn btn-ghost" disabled>Clear</button>
+      <small class="field-note">To kill a worker, use the <b>Kill</b> button on a
+        worker pod in the <b>JobSet topology</b> panel — you pick exactly which one.</small>
 
       <details class="how">
         <summary>How it works</summary>
@@ -65,8 +66,9 @@
             (a headless service).</li>
           <li>The <b>leader</b> aggregates all partials into a live running
             estimate: <b>π = 4 × inside / total</b>.</li>
-          <li><b>Kill a worker</b> deletes one worker pod. JobSet's failurePolicy
-            recreates <b>all</b> child Jobs — the <b>whole group restarts</b>.</li>
+          <li>Hit <b>Kill</b> on any worker pod (in the topology panel) to delete
+            it. JobSet's failurePolicy recreates <b>all</b> child Jobs — the
+            <b>whole group restarts</b>.</li>
         </ol>
       </details>
     </section>

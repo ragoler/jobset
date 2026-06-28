@@ -17,7 +17,6 @@ const els = {
   workers: document.getElementById("workers"),
   samples: document.getElementById("samples"),
   launch: document.getElementById("launch"),
-  kill: document.getElementById("kill"),
   clear: document.getElementById("clear"),
   phase: document.getElementById("phase"),
   piValue: document.getElementById("pi-value"),
@@ -131,6 +130,10 @@ function renderPods(s) {
   pods.forEach((p) => {
     const isLeader = p.role === "leader";
     const ok = p.status === "Running" || p.status === "Succeeded";
+    // Only running/pending workers can be killed (the leader is never killable, and
+    // a finished worker has no pod to delete).
+    const killable =
+      !isLeader && (p.status === "Running" || p.status === "Pending") && cfg.mode !== "MOCK";
     const el = document.createElement("div");
     el.className = `pod ${isLeader ? "leader" : "worker"} ${ok ? "" : "pending"}`;
     el.innerHTML =
@@ -142,7 +145,11 @@ function renderPods(s) {
       `<div class="pright">` +
       `<span class="pstatus">${p.status || "?"}</span>` +
       `<span class="page">${p.elapsed_s != null ? p.elapsed_s.toFixed(0) + "s" : "—"}</span>` +
-      `</div>`;
+      `</div>` +
+      (killable
+        ? `<button class="pod-kill" data-pod="${p.pod_name}" ` +
+          `title="Kill this worker — the whole JobSet restarts">Kill</button>`
+        : "");
     els.pods.appendChild(el);
   });
 }
@@ -158,7 +165,6 @@ async function poll() {
       const s = await sr.json();
       renderPods(s);
       const live = s.exists;
-      els.kill.disabled = !live || cfg.mode === "MOCK";
       els.clear.disabled = !live || cfg.mode === "MOCK";
     }
     if (pr.ok) renderPi(await pr.json());
@@ -197,11 +203,13 @@ async function launch() {
   }
 }
 
-async function killWorker() {
-  els.kill.disabled = true;
-  els.phase.textContent = "· killing a worker — watch the whole group restart…";
+async function killWorker(podName) {
+  els.phase.textContent = `· killing ${podName} — watch the whole group restart…`;
   try {
-    const r = await fetch(dataUrl("/kill-worker"), { method: "POST", headers: dataHeaders() });
+    const r = await fetch(dataUrl(`/kill-worker?pod=${encodeURIComponent(podName)}`), {
+      method: "POST",
+      headers: dataHeaders(),
+    });
     if (!r.ok) {
       const d = await r.json().catch(() => ({}));
       throw new Error(d.detail || `kill failed: ${r.status}`);
@@ -224,8 +232,15 @@ async function clearJobset() {
 
 /* ---- init ------------------------------------------------------------ */
 els.launch.addEventListener("click", launch);
-els.kill.addEventListener("click", killWorker);
 els.clear.addEventListener("click", clearJobset);
+// The pod cards are re-rendered every poll, so use event delegation for their
+// per-worker Kill buttons rather than per-element listeners.
+els.pods.addEventListener("click", (e) => {
+  const btn = e.target.closest(".pod-kill");
+  if (!btn || cfg.mode === "MOCK") return;
+  btn.disabled = true;
+  killWorker(btn.dataset.pod);
+});
 
 (async function init() {
   await loadConfig();

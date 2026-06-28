@@ -233,11 +233,14 @@ def pi() -> dict:
 
 
 @app.post("/kill-worker")
-def kill_worker() -> dict:
-    """Delete one worker pod to demonstrate the WHOLE JobSet restarting.
+def kill_worker(pod: str | None = None) -> dict:
+    """Delete a worker pod to demonstrate the WHOLE JobSet restarting.
 
-    JobSet's failurePolicy (restartStrategy: Recreate) recreates ALL child Jobs
-    when any pod fails, so deleting a single worker triggers a full-group restart.
+    Pass ``?pod=<name>`` to kill a SPECIFIC worker (the UI's per-pod button, so the
+    user sees exactly which pod they're killing); with no ``pod`` the first
+    Running/Pending worker is chosen (used by verify_setup.sh). JobSet's
+    failurePolicy (restartStrategy: Recreate) recreates ALL child Jobs when any pod
+    fails, so deleting one worker triggers a full-group restart.
     """
     core, _ = _k8s()
     try:
@@ -247,10 +250,25 @@ def kill_worker() -> dict:
         )
     except Exception as exc:
         raise HTTPException(status_code=503, detail=f"cannot list workers: {exc}")
-    running = [p for p in pods.items if p.status.phase in ("Running", "Pending")]
-    if not running:
-        raise HTTPException(status_code=409, detail="no worker pod to kill")
-    victim = running[0]
+    if pod:
+        # Only worker pods of THIS JobSet are selectable (label filter above), so a
+        # named pod is guaranteed to be a worker — never the leader.
+        victim = next((p for p in pods.items if p.metadata.name == pod), None)
+        if victim is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"worker pod '{pod}' not found in JobSet {JOBSET_NAME}",
+            )
+        if victim.status.phase not in ("Running", "Pending"):
+            raise HTTPException(
+                status_code=409,
+                detail=f"worker '{pod}' is {victim.status.phase}, not killable",
+            )
+    else:
+        running = [p for p in pods.items if p.status.phase in ("Running", "Pending")]
+        if not running:
+            raise HTTPException(status_code=409, detail="no worker pod to kill")
+        victim = running[0]
     try:
         core.delete_namespaced_pod(victim.metadata.name, POD_NAMESPACE)
     except Exception as exc:
