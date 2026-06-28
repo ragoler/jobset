@@ -107,12 +107,19 @@ with its node, phase, and elapsed runtime.
 
 ## 5. GKE autoscaling (the GKE story)
 
-- The leader/worker pods select `cloud.google.com/compute-class: jobset-cpu`
+- The **worker** pods select `cloud.google.com/compute-class: jobset-cpu`
   (`cluster/cpu-computeclass.yaml`), a Spot CPU ComputeClass with
-  `nodePoolAutoCreation: enabled`.
-- When the JobSet's pods can't schedule (no node), **GKE Node Auto-Provisioning**
-  creates **Spot** CPU node pools on demand; when the JobSet finishes, the empty
-  Spot nodes scale back to zero.
+  `nodePoolAutoCreation: enabled`. The **leader** is deliberately *not* pinned to
+  Spot — it's the coordinator/aggregator that must stay up for the whole run, so it
+  schedules on the cluster's stable on-demand pool. (Pinning the leader to Spot let
+  random preemptions fail its Job and spuriously restart the whole JobSet.)
+- When the worker pods can't schedule (no node), **GKE Node Auto-Provisioning**
+  creates **Spot** CPU node pools on demand; when you clear the JobSet (`DELETE
+  /clear`), the empty Spot nodes scale back to zero.
+- The workers **stream continuously** — they keep sampling and POSTing partials
+  until the JobSet is cleared or a worker is killed — so the π estimate stays live
+  and there is always a `Running` worker for the "kill a worker" demo. The worker
+  Jobs therefore don't run to `completion` by design; the JobSet runs until cleared.
 - This is the value prop: *a batch group appears → cheap compute appears → group
   done → it disappears.*
 

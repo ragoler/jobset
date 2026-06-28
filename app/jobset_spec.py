@@ -36,34 +36,43 @@ def leader_host(jobset_name: str) -> str:
 
 
 def _pod_spec(role: str, image: str, args_env: dict[str, str], cpu: str) -> dict:
-    """A pod template for one role (leader/worker), pinned to the Spot CPU class."""
+    """A pod template for one role (leader/worker).
+
+    Workers — the batch compute being showcased — run on the cheap ``jobset-cpu``
+    Spot ComputeClass (NAP grows/shrinks it on demand). The LEADER is the demo's
+    coordinator/aggregator and must stay up for the whole run, so it is NOT pinned
+    to Spot: it schedules on the cluster's stable default (on-demand) pool. Pinning
+    the leader to Spot let random preemptions fail its Job and spuriously restart
+    the whole JobSet — making the "kill a worker → group restarts" demo fire by
+    accident.
+    """
     env = [{"name": k, "value": v} for k, v in args_env.items()]
-    # Expose the worker's JobSet job index to the container via the downward API
-    # is not directly available; JobSet/Job inject JOB_COMPLETION_INDEX. We pass
-    # the pod name through for logging/attribution.
+    # JobSet/Job inject JOB_COMPLETION_INDEX; also pass the pod name through for
+    # logging/attribution.
     env.append(
         {"name": "POD_NAME", "valueFrom": {"fieldRef": {"fieldPath": "metadata.name"}}}
     )
-    return {
-        "spec": {
-            "restartPolicy": "Never",
-            "nodeSelector": {"cloud.google.com/compute-class": "jobset-cpu"},
-            "containers": [
-                {
-                    "name": role,
-                    "image": image,
-                    "imagePullPolicy": "Always",
-                    "command": ["python3", f"{role}.py"],
-                    "env": env,
-                    "resources": {
-                        "requests": {"cpu": cpu, "memory": "256Mi"},
-                        "limits": {"cpu": cpu, "memory": "512Mi"},
-                    },
-                    **({"ports": [{"containerPort": LEADER_PORT}]} if role == "leader" else {}),
-                }
-            ],
-        }
+    spec: dict = {
+        "restartPolicy": "Never",
+        "containers": [
+            {
+                "name": role,
+                "image": image,
+                "imagePullPolicy": "Always",
+                "command": ["python3", f"{role}.py"],
+                "env": env,
+                "resources": {
+                    "requests": {"cpu": cpu, "memory": "256Mi"},
+                    "limits": {"cpu": cpu, "memory": "512Mi"},
+                },
+                **({"ports": [{"containerPort": LEADER_PORT}]} if role == "leader" else {}),
+            }
+        ],
     }
+    # Only the workers ride Spot; the leader stays on stable on-demand capacity.
+    if role == "worker":
+        spec["nodeSelector"] = {"cloud.google.com/compute-class": "jobset-cpu"}
+    return {"spec": spec}
 
 
 def build_jobset(

@@ -67,12 +67,21 @@ def test_workers_get_leader_host_and_target_env():
     assert env["WORKER_COUNT"] == "3"
 
 
-def test_pods_pin_to_spot_cpu_computeclass():
+def test_only_workers_pin_to_spot_leader_stays_stable():
+    """Workers run on the Spot jobset-cpu class; the leader (the coordinator that
+    must stay up for the whole run) does NOT, so it lands on the stable on-demand
+    pool and isn't randomly preempted into spurious whole-group restarts."""
     js = _build()
-    for rj in js["spec"]["replicatedJobs"]:
-        pod = rj["template"]["spec"]["template"]["spec"]
-        assert pod["nodeSelector"]["cloud.google.com/compute-class"] == "jobset-cpu"
-        assert pod["restartPolicy"] == "Never"
+    by_name = {rj["name"]: rj["template"]["spec"]["template"]["spec"]
+               for rj in js["spec"]["replicatedJobs"]}
+
+    worker_pod = by_name["workers"]
+    assert worker_pod["nodeSelector"]["cloud.google.com/compute-class"] == "jobset-cpu"
+    assert worker_pod["restartPolicy"] == "Never"
+
+    leader_pod = by_name["leader"]
+    assert "nodeSelector" not in leader_pod, "leader must not be pinned to Spot"
+    assert leader_pod["restartPolicy"] == "Never"
 
 
 def test_roles_use_correct_command():

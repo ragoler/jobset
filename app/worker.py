@@ -31,11 +31,11 @@ from montecarlo import sample_batch
 
 LEADER_HOST = os.environ.get("LEADER_HOST", "localhost")
 LEADER_PORT = int(os.environ.get("LEADER_PORT", "9000"))
-# How many darts the whole JobSet should draw, and how many workers split it.
-TARGET_SAMPLES = int(os.environ.get("TARGET_SAMPLES", "20000000"))
 WORKER_COUNT = int(os.environ.get("WORKER_COUNT", "4"))
-# Samples per inner batch between leader updates (keeps the stream lively).
-BATCH = int(os.environ.get("BATCH_SAMPLES", "50000"))
+# Samples per inner batch between leader updates. At ~5-10M darts/s on a Spot CPU
+# this posts a cumulative partial a few times a second — lively without flooding
+# the leader.
+BATCH = int(os.environ.get("BATCH_SAMPLES", "2000000"))
 
 
 def _worker_index() -> int:
@@ -75,36 +75,29 @@ def main() -> None:
     worker_id = socket.gethostname()
     # Distinct, deterministic seed per worker -> independent sample streams.
     rng = random.Random(1000 + idx)
-    # Split the global target evenly; the last worker mops up any remainder.
-    per_worker = TARGET_SAMPLES // max(WORKER_COUNT, 1)
-    if idx == WORKER_COUNT - 1:
-        per_worker += TARGET_SAMPLES - per_worker * WORKER_COUNT
 
     print(
         f"[worker {idx}] {worker_id} -> leader {LEADER_HOST}:{LEADER_PORT}, "
-        f"target={per_worker} darts",
+        f"streaming continuously",
         flush=True,
     )
 
+    # Stream FOREVER: keep drawing real darts and POSTing cumulative partials until
+    # the pod is terminated (the user clears the JobSet, or kill-worker deletes this
+    # pod to trigger a whole-group restart). A long-running stream is what makes the
+    # demo work: π keeps refining live, and there is always a Running worker to kill.
+    # The worker Job therefore never "completes" by design — the JobSet runs until
+    # cleared. (sample_batch is real CPU compute; no sleeps padding the work.)
     inside = 0
     total = 0
-    # Wait for the leader to accept our first partial (gang startup: it is coming
-    # up alongside us). Keep sampling while we wait so no CPU is wasted.
-    while total < per_worker:
-        n = min(BATCH, per_worker - total)
-        p = sample_batch(n, rng)
+    while True:
+        p = sample_batch(BATCH, rng)
         inside += p.inside
         total += p.total
         if not _post_partial(worker_id, inside, total):
-            # Leader not ready / transient — back off briefly and retry next loop.
+            # Leader not ready yet (gang startup) or transient — back off and retry;
+            # the next loop re-posts the cumulative total so nothing is lost.
             time.sleep(1.0)
-
-    # Final flush so the leader has our complete count even if the last POST raced.
-    for _ in range(10):
-        if _post_partial(worker_id, inside, total):
-            break
-        time.sleep(1.0)
-    print(f"[worker {idx}] done: inside={inside} total={total}", flush=True)
 
 
 if __name__ == "__main__":
