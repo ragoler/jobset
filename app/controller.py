@@ -129,7 +129,17 @@ def healthz() -> dict:
 
 @app.post("/launch")
 def launch(req: LaunchRequest) -> dict:
-    """Create the JobSet (replacing any prior one) and return its name."""
+    """Create the JobSet (replacing any prior one) and return its name.
+
+    The JobSet name is fixed, so a new launch must FULLY replace the old run. We
+    delete with foreground propagation and then poll until the object (and its child
+    Jobs/pods) are actually gone before creating the new one. Without this wait, the
+    create races a still-terminating object of the same name, fails with a 409, and
+    the OLD run keeps going — so a new worker count / sample size silently has no
+    effect.
+    """
+    import time as _t
+
     _, custom = _k8s()
     body = build_jobset(
         name=JOBSET_NAME,
@@ -139,16 +149,37 @@ def launch(req: LaunchRequest) -> dict:
         total_samples=req.total_samples,
         max_restarts=req.max_restarts,
     )
-    # Replace any existing JobSet so a fresh launch starts clean.
+
+    # 1) Delete any existing JobSet (foreground so child Jobs/pods go too).
     try:
         custom.delete_namespaced_custom_object(
-            JOBSET_GROUP, JOBSET_VERSION, POD_NAMESPACE, JOBSET_PLURAL, JOBSET_NAME
+            JOBSET_GROUP, JOBSET_VERSION, POD_NAMESPACE, JOBSET_PLURAL, JOBSET_NAME,
+            propagation_policy="Foreground",
         )
-        import time as _t
+    except Exception as exc:  # 404 = nothing to delete; anything else is real
+        if getattr(exc, "status", None) != 404:
+            raise HTTPException(status_code=503, detail=f"delete previous JobSet failed: {exc}")
 
-        _t.sleep(2)  # let the operator tear down the old child Jobs
-    except Exception:
-        pass
+    # 2) Wait until it's gone so the create below can't collide. Bounded to ~20s to
+    #    stay under the L7 load balancer's request timeout; if the old run is still
+    #    terminating we return 409 and the UI asks the user to Launch again.
+    for _ in range(20):
+        try:
+            custom.get_namespaced_custom_object(
+                JOBSET_GROUP, JOBSET_VERSION, POD_NAMESPACE, JOBSET_PLURAL, JOBSET_NAME
+            )
+        except Exception as exc:
+            if getattr(exc, "status", None) == 404:
+                break
+            raise HTTPException(status_code=503, detail=f"checking previous JobSet failed: {exc}")
+        _t.sleep(1)
+    else:
+        raise HTTPException(
+            status_code=409,
+            detail="previous JobSet is still terminating — try Launch again in a moment",
+        )
+
+    # 3) Create the new one.
     try:
         custom.create_namespaced_custom_object(
             JOBSET_GROUP, JOBSET_VERSION, POD_NAMESPACE, JOBSET_PLURAL, body

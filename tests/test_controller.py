@@ -28,6 +28,14 @@ def client():
     return TestClient(controller.app)
 
 
+def _api_error(status):
+    """A stand-in for kubernetes.client ApiException — the controller branches on
+    the ``.status`` attribute (e.g. 404 == gone), so we only need that."""
+    e = Exception(f"api error {status}")
+    e.status = status
+    return e
+
+
 def _fake_pod(name, role, phase="Running", node="spot-node-1"):
     pod = mock.MagicMock()
     pod.metadata.name = name
@@ -44,20 +52,40 @@ def test_healthz(client):
 
 def test_launch_creates_valid_jobset(client):
     core, custom = mock.MagicMock(), mock.MagicMock()
-    # delete of any prior CR raises (none exists) -> swallowed.
-    custom.delete_namespaced_custom_object.side_effect = Exception("not found")
+    # No prior CR: the delete 404s (swallowed) and the "is it gone?" poll 404s, so
+    # the create proceeds immediately without waiting.
+    custom.delete_namespaced_custom_object.side_effect = _api_error(404)
+    custom.get_namespaced_custom_object.side_effect = _api_error(404)
     with mock.patch.object(controller, "_k8s", return_value=(core, custom)):
         r = client.post("/launch", json={"workers": 5, "total_samples": 50000})
     assert r.status_code == 200, r.text
     body = r.json()
     assert body["workers"] == 5
-    # The created object is a real JobSet CR with leader+workers and failurePolicy.
-    _, kwargs = custom.create_namespaced_custom_object.call_args, None
+    # The created object is a real JobSet CR with leader+workers and failurePolicy,
+    # and the chosen worker count actually flows into the spec (regression: a new
+    # config must take effect, not be ignored).
     created = custom.create_namespaced_custom_object.call_args[0][-1]
     assert created["kind"] == "JobSet"
-    rjobs = {rj["name"] for rj in created["spec"]["replicatedJobs"]}
-    assert rjobs == {"leader", "workers"}
+    by_name = {rj["name"]: rj for rj in created["spec"]["replicatedJobs"]}
+    assert set(by_name) == {"leader", "workers"}
+    assert by_name["workers"]["template"]["spec"]["parallelism"] == 5
+    assert by_name["workers"]["template"]["spec"]["completions"] == 5
     assert created["spec"]["failurePolicy"]["maxRestarts"] > 0
+
+
+def test_launch_waits_for_old_jobset_to_terminate(client):
+    """If the old JobSet lingers (still terminating), launch must NOT create over it
+    and silently keep the old run — it returns 409 instead."""
+    core, custom = mock.MagicMock(), mock.MagicMock()
+    custom.delete_namespaced_custom_object.return_value = {}
+    # The old object never disappears -> the existence poll never 404s.
+    custom.get_namespaced_custom_object.return_value = {"metadata": {"name": "pi-estimator"}}
+    # Patch time.sleep so the bounded poll doesn't actually wait the full ~60s.
+    with mock.patch.object(controller, "_k8s", return_value=(core, custom)), \
+         mock.patch("time.sleep", return_value=None):
+        r = client.post("/launch", json={"workers": 2, "total_samples": 50000})
+    assert r.status_code == 409
+    custom.create_namespaced_custom_object.assert_not_called()
 
 
 def test_kill_worker_deletes_a_worker_pod(client):

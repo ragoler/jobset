@@ -54,6 +54,11 @@ def _pod_spec(role: str, image: str, args_env: dict[str, str], cpu: str) -> dict
     )
     spec: dict = {
         "restartPolicy": "Never",
+        # The leader/worker processes have nothing to flush on shutdown; a short
+        # grace makes kill-worker (whole-group restart) and a re-Launch (which must
+        # tear the old JobSet down first) react in seconds instead of waiting out
+        # the default 30s pod grace.
+        "terminationGracePeriodSeconds": 5,
         "containers": [
             {
                 "name": role,

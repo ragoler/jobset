@@ -126,7 +126,7 @@ body {
 .pod.pending { opacity: .6; }
 .pod.pending .dot { background: var(--muted); }
 .pmeta { flex: 1; overflow: hidden; }
-.pname { display: block; font-size: 12px; font-family: ui-monospace, SFMono-Regular, monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pname { display: block; font-size: 12px; font-family: ui-monospace, SFMono-Regular, monospace; overflow-wrap: anywhere; line-height: 1.3; }
 .psub { display: block; font-size: 11px; color: var(--muted); margin-top: 2px; }
 .pright { text-align: right; flex: 0 0 auto; }
 .pstatus { display: block; font-size: 12px; font-weight: 600; }

@@ -139,7 +139,7 @@ function renderPods(s) {
     el.innerHTML =
       `<span class="dot"></span>` +
       `<div class="pmeta">` +
-      `<span class="pname">${p.pod_name}</span>` +
+      `<span class="pname" title="${p.pod_name}">${p.pod_name}</span>` +
       `<span class="psub">${p.role} · ${p.node || "scheduling…"}</span>` +
       `</div>` +
       `<div class="pright">` +
@@ -182,7 +182,7 @@ function startPolling() {
 /* ---- actions --------------------------------------------------------- */
 async function launch() {
   els.launch.disabled = true;
-  els.phase.textContent = "· creating JobSet…";
+  els.phase.textContent = "· replacing any previous run, then creating JobSet…";
   try {
     const body = JSON.stringify({
       workers: parseInt(els.workers.value, 10),
@@ -204,7 +204,9 @@ async function launch() {
 }
 
 async function killWorker(podName) {
-  els.phase.textContent = `· killing ${podName} — watch the whole group restart…`;
+  els.phase.textContent =
+    `· killed ${podName} — the JobSet operator now recreates the WHOLE group ` +
+    `(takes a few seconds on Spot; the restart count will tick up)…`;
   try {
     const r = await fetch(dataUrl(`/kill-worker?pod=${encodeURIComponent(podName)}`), {
       method: "POST",
