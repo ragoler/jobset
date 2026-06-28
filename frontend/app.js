@@ -175,8 +175,10 @@ async function poll() {
       fetch(dataUrl("/status"), { headers: dataHeaders() }),
       fetch(dataUrl("/pi"), { headers: dataHeaders() }),
     ]);
+    let s = null;
+    let p = null;
     if (sr.ok) {
-      const s = await sr.json();
+      s = await sr.json();
       const r = s.restarts || 0;
       // A restart means the old (killed) pods are gone and a fresh group is up —
       // drop the optimistic "Killing…" flags.
@@ -184,12 +186,44 @@ async function poll() {
       lastRestarts = r;
       lastStatus = s;
       renderPods(s);
-      els.clear.disabled = !s.exists || cfg.mode === "MOCK";
     }
-    if (pr.ok) renderPi(await pr.json());
+    if (pr.ok) {
+      p = await pr.json();
+      renderPi(p);
+    }
+    updateControls(s, p);
   } catch (_) {
     /* transient */
   }
+}
+
+// Drive Launch/Clear from the live cluster state. The key rule: you cannot Launch
+// while a JobSet exists — you must Clear first. This prevents relaunching ON TOP of
+// a run that is still starting (which would churn Spot nodes and look broken). The
+// Launch label reflects what the existing run is doing so it's clear WHY it's
+// disabled, rather than looking stuck.
+function updateControls(s, p) {
+  if (cfg.mode === "MOCK") {
+    els.launch.disabled = true;
+    els.launch.textContent = "Launch JobSet";
+    els.clear.disabled = true;
+    return;
+  }
+  const exists = !!(s && s.exists);
+  els.clear.disabled = !exists;
+  if (!exists) {
+    els.launch.disabled = false;
+    els.launch.textContent = "Launch JobSet";
+    return;
+  }
+  els.launch.disabled = true;
+  const live = !!(p && p.available !== false && (p.total || 0) > 0);
+  const converged = !!(p && p.converged);
+  els.launch.textContent = converged
+    ? "Done — Clear to run again"
+    : live
+      ? "Running… (Clear to restart)"
+      : "Starting…";
 }
 
 function startPolling() {
@@ -200,10 +234,14 @@ function startPolling() {
 
 /* ---- actions --------------------------------------------------------- */
 async function launch() {
+  // Disable immediately; from here on updateControls() (driven by the poll) owns the
+  // button state — it stays disabled until the JobSet is Cleared, so there is no
+  // window where it looks clickable while the run is still starting.
   els.launch.disabled = true;
+  els.launch.textContent = "Starting…";
   killing.clear();
   lastRestarts = 0;
-  els.phase.textContent = "· replacing any previous run, then creating JobSet…";
+  els.phase.textContent = "· creating JobSet…";
   try {
     const body = JSON.stringify({
       workers: parseInt(els.workers.value, 10),
@@ -214,13 +252,16 @@ async function launch() {
       headers: dataHeaders(),
       body,
     });
-    if (!r.ok) throw new Error(`launch failed: ${r.status}`);
+    if (!r.ok) {
+      const d = await r.json().catch(() => ({}));
+      throw new Error(d.detail || `launch failed: ${r.status}`);
+    }
     running = true;
     startPolling();
   } catch (e) {
+    // Failed to create — let the next poll restore the correct button state
+    // (no JobSet -> Launch re-enables).
     els.phase.textContent = `· ${e.message}`;
-  } finally {
-    els.launch.disabled = cfg.mode === "MOCK";
   }
 }
 

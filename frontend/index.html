@@ -52,8 +52,10 @@
 
       <button id="launch" class="btn btn-primary">Launch JobSet</button>
       <button id="clear" class="btn btn-ghost" disabled>Clear</button>
-      <small class="field-note">To kill a worker, use the <b>Kill</b> button on a
-        worker pod in the <b>JobSet topology</b> panel — you pick exactly which one.</small>
+      <small class="field-note">One run at a time: <b>Launch</b> stays disabled while
+        a JobSet exists (it shows <i>Starting… / Running…</i>). Hit <b>Clear</b> to
+        stop it before launching a new one. To kill a worker, use the <b>Kill</b>
+        button on a worker pod in the <b>JobSet topology</b> panel.</small>
 
       <details class="how">
         <summary>How it works</summary>
