@@ -29,6 +29,7 @@ const els = {
   pods: document.getElementById("pods"),
   podsEmpty: document.getElementById("pods-empty"),
   podCount: document.getElementById("pod-count"),
+  chart: document.getElementById("error-chart"),
 };
 
 const PI = Math.PI;
@@ -42,6 +43,9 @@ let running = false;
 const killing = new Set();
 let lastStatus = null; // most recent /status payload, for re-rendering on kill
 let lastRestarts = 0; // detects when a whole-group restart has completed
+// Convergence curve: accumulated {x: samples thrown, y: |estimate - π|} points,
+// gathered straight from the /pi poll (no backend/metrics needed). Reset per run.
+const errSeries = [];
 
 /* ---- auth + bases ----------------------------------------------------- */
 function jwt() {
@@ -106,6 +110,8 @@ function renderPi(p) {
     els.progressBar.style.width = "0%";
     els.statSamples.textContent = "0 / 0";
     els.statInside.textContent = "0";
+    errSeries.length = 0;
+    drawErrorChart(0);
     return;
   }
   els.piValue.textContent = fmtPi(p.pi);
@@ -116,6 +122,99 @@ function renderPi(p) {
   els.statInside.textContent = (p.inside || 0).toLocaleString();
   els.statElapsed.textContent = `${(p.elapsed_s || 0).toFixed(1)} s`;
   els.phase.textContent = p.converged ? "· converged" : "· estimating…";
+
+  // Accumulate the convergence point. Guard against a backwards total (a restart
+  // we haven't observed yet) and only append when samples have actually advanced.
+  const x = Math.min(p.total, p.target || p.total);
+  if (errSeries.length && x < errSeries[errSeries.length - 1].x) errSeries.length = 0;
+  if (!errSeries.length || x > errSeries[errSeries.length - 1].x) {
+    errSeries.push({ x, y: err });
+  }
+  drawErrorChart(p.target || x);
+}
+
+function fmtBig(n) {
+  if (n >= 1e9) return `${+(n / 1e9).toFixed(n % 1e9 ? 1 : 0)}B`;
+  if (n >= 1e6) return `${+(n / 1e6).toFixed(n % 1e6 ? 1 : 0)}M`;
+  if (n >= 1e3) return `${+(n / 1e3).toFixed(n % 1e3 ? 1 : 0)}k`;
+  return `${n}`;
+}
+
+// Hand-drawn line chart (no library, so the feature stays self-contained/offline).
+// x = samples thrown (0 → target), y = |estimate − π| (auto-scaled).
+function drawErrorChart(xMax) {
+  const cv = els.chart;
+  if (!cv) return;
+  const dpr = window.devicePixelRatio || 1;
+  const w = cv.clientWidth || 300;
+  const h = cv.clientHeight || 180;
+  if (cv.width !== Math.round(w * dpr) || cv.height !== Math.round(h * dpr)) {
+    cv.width = Math.round(w * dpr);
+    cv.height = Math.round(h * dpr);
+  }
+  const ctx = cv.getContext("2d");
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, w, h);
+
+  const css = getComputedStyle(document.documentElement);
+  const accent = (css.getPropertyValue("--accent-2") || "#36d1b7").trim();
+  const grid = "rgba(255,255,255,0.12)";
+  const muted = (css.getPropertyValue("--muted") || "#8a97c0").trim();
+
+  const m = { l: 52, r: 12, t: 12, b: 24 };
+  const pw = w - m.l - m.r;
+  const ph = h - m.t - m.b;
+
+  ctx.font = "10px ui-monospace, monospace";
+  ctx.strokeStyle = grid;
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(m.l, m.t);
+  ctx.lineTo(m.l, m.t + ph);
+  ctx.lineTo(m.l + pw, m.t + ph);
+  ctx.stroke();
+
+  if (errSeries.length < 2) {
+    ctx.fillStyle = muted;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText("collecting samples…", m.l + pw / 2, m.t + ph / 2);
+    return;
+  }
+
+  const yMax = Math.max(...errSeries.map((d) => d.y)) * 1.1 || 1e-3;
+  const X = (x) => m.l + (xMax ? x / xMax : 0) * pw;
+  const Y = (y) => m.t + ph - (yMax ? y / yMax : 0) * ph;
+
+  // y labels (0 and yMax)
+  ctx.fillStyle = muted;
+  ctx.textAlign = "right";
+  ctx.textBaseline = "middle";
+  ctx.fillText(yMax.toExponential(1), m.l - 6, Y(yMax));
+  ctx.fillText("0", m.l - 6, Y(0));
+  // x labels (0 and target)
+  ctx.textAlign = "center";
+  ctx.textBaseline = "top";
+  ctx.fillText("0", X(0), m.t + ph + 5);
+  ctx.fillText(fmtBig(xMax), X(xMax), m.t + ph + 5);
+
+  // the convergence line
+  ctx.strokeStyle = accent;
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  errSeries.forEach((d, i) => {
+    const px = X(d.x);
+    const py = Y(d.y);
+    i ? ctx.lineTo(px, py) : ctx.moveTo(px, py);
+  });
+  ctx.stroke();
+
+  // current point marker
+  const last = errSeries[errSeries.length - 1];
+  ctx.fillStyle = accent;
+  ctx.beginPath();
+  ctx.arc(X(last.x), Y(last.y), 3, 0, Math.PI * 2);
+  ctx.fill();
 }
 
 function renderPods(s) {
@@ -181,8 +280,11 @@ async function poll() {
       s = await sr.json();
       const r = s.restarts || 0;
       // A restart means the old (killed) pods are gone and a fresh group is up —
-      // drop the optimistic "Killing…" flags.
-      if (r > lastRestarts) killing.clear();
+      // drop the optimistic "Killing…" flags and start the convergence curve over.
+      if (r > lastRestarts) {
+        killing.clear();
+        errSeries.length = 0;
+      }
       lastRestarts = r;
       lastStatus = s;
       renderPods(s);
@@ -241,6 +343,7 @@ async function launch() {
   els.launch.textContent = "Starting…";
   killing.clear();
   lastRestarts = 0;
+  errSeries.length = 0;
   els.phase.textContent = "· creating JobSet…";
   try {
     const body = JSON.stringify({
