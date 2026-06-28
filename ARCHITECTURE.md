@@ -114,12 +114,15 @@ with its node, phase, and elapsed runtime.
   schedules on the cluster's stable on-demand pool. (Pinning the leader to Spot let
   random preemptions fail its Job and spuriously restart the whole JobSet.)
 - When the worker pods can't schedule (no node), **GKE Node Auto-Provisioning**
-  creates **Spot** CPU node pools on demand; when you clear the JobSet (`DELETE
-  /clear`), the empty Spot nodes scale back to zero.
-- The workers **stream continuously** — they keep sampling and POSTing partials
-  until the JobSet is cleared or a worker is killed — so the π estimate stays live
-  and there is always a `Running` worker for the "kill a worker" demo. The worker
-  Jobs therefore don't run to `completion` by design; the JobSet runs until cleared.
+  creates **Spot** CPU node pools on demand; once the workers finish their darts
+  and complete, the empty Spot nodes scale back to zero. The leader (on the stable
+  pool) keeps serving the final π until you `DELETE /clear` the JobSet.
+- Each worker throws its even share of the **target** dart count, POSTing
+  cumulative partials so π and the progress bar advance live, then exits 0 (its Job
+  completes). Size the target so the run lasts long enough to watch and to hit
+  "kill a worker" mid-run (the default is 1 billion darts ≈ 30-60s on a few Spot
+  CPUs). A worker killed **before** it finishes fails its Job and triggers JobSet's
+  whole-group restart.
 - This is the value prop: *a batch group appears → cheap compute appears → group
   done → it disappears.*
 

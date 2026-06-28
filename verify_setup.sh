@@ -61,17 +61,19 @@ fi
 echo "=== Health check ==="
 curl -fsS "${BASE}/healthz" && echo
 
-echo "=== Launching a JobSet (3 workers, continuous sampling) ==="
+echo "=== Launching a JobSet (3 workers, 300M darts) ==="
+# 300M darts across 3 workers runs ~20-30s on Spot CPUs — long enough that the
+# workers are still Running when we reach the kill-worker step below.
 curl -fsS -X POST "${BASE}/launch" \
   -H 'Content-Type: application/json' \
-  -d '{"workers":3,"total_samples":20000000,"max_restarts":3}' >/dev/null
+  -d '{"workers":3,"total_samples":300000000,"max_restarts":3}' >/dev/null
 echo "launched"
 
-# The workers stream continuously, so the real success signal is the AGGREGATED π
-# estimate advancing — not a fragile "all pods Running at once" snapshot (the leader
-# runs on the stable pool while the workers are still scaling up on Spot, and once
-# scaled they keep running). Allow ~8 min for Node Auto-Provisioning to grow Spot
-# capacity. We print per-pod role:phase along the way for visibility.
+# The real success signal is the AGGREGATED π estimate advancing — not a fragile
+# "all pods Running at once" snapshot (the leader runs on the stable pool while the
+# workers are still scaling up on Spot, and fast workers may already have finished
+# their share). Allow ~8 min for Node Auto-Provisioning to grow Spot capacity. We
+# print per-pod role:phase along the way for visibility.
 echo "=== Waiting for the distributed π estimate to go live (up to ~8 min for Spot scale-up) ==="
 PI=0
 PI_OK=""

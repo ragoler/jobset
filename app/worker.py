@@ -31,10 +31,12 @@ from montecarlo import sample_batch
 
 LEADER_HOST = os.environ.get("LEADER_HOST", "localhost")
 LEADER_PORT = int(os.environ.get("LEADER_PORT", "9000"))
+# Total darts the WHOLE JobSet should throw; this worker draws its even share.
+TARGET_SAMPLES = int(os.environ.get("TARGET_SAMPLES", "1000000000"))
 WORKER_COUNT = int(os.environ.get("WORKER_COUNT", "4"))
 # Samples per inner batch between leader updates. At ~5-10M darts/s on a Spot CPU
-# this posts a cumulative partial a few times a second — lively without flooding
-# the leader.
+# this posts a cumulative partial a few times a second — a smooth progress bar
+# without flooding the leader.
 BATCH = int(os.environ.get("BATCH_SAMPLES", "2000000"))
 
 
@@ -75,29 +77,42 @@ def main() -> None:
     worker_id = socket.gethostname()
     # Distinct, deterministic seed per worker -> independent sample streams.
     rng = random.Random(1000 + idx)
+    # This worker's even share of the global target; the last worker mops up any
+    # remainder so the totals sum to exactly TARGET_SAMPLES.
+    per_worker = TARGET_SAMPLES // max(WORKER_COUNT, 1)
+    if idx == WORKER_COUNT - 1:
+        per_worker += TARGET_SAMPLES - per_worker * WORKER_COUNT
 
     print(
         f"[worker {idx}] {worker_id} -> leader {LEADER_HOST}:{LEADER_PORT}, "
-        f"streaming continuously",
+        f"target={per_worker} darts",
         flush=True,
     )
 
-    # Stream FOREVER: keep drawing real darts and POSTing cumulative partials until
-    # the pod is terminated (the user clears the JobSet, or kill-worker deletes this
-    # pod to trigger a whole-group restart). A long-running stream is what makes the
-    # demo work: π keeps refining live, and there is always a Running worker to kill.
-    # The worker Job therefore never "completes" by design — the JobSet runs until
-    # cleared. (sample_batch is real CPU compute; no sleeps padding the work.)
+    # Throw real darts toward this worker's target, POSTing the cumulative
+    # (inside, total) after each batch so the leader's π and the progress bar
+    # advance live. The leader applies deltas, so a retried POST never
+    # double-counts. The worker exits 0 when done -> its Job completes, and the
+    # Spot worker nodes scale back to zero. A kill-worker (pod deleted before it
+    # finishes) fails the Job and triggers JobSet's whole-group restart.
     inside = 0
     total = 0
-    while True:
-        p = sample_batch(BATCH, rng)
+    while total < per_worker:
+        n = min(BATCH, per_worker - total)
+        p = sample_batch(n, rng)
         inside += p.inside
         total += p.total
         if not _post_partial(worker_id, inside, total):
             # Leader not ready yet (gang startup) or transient — back off and retry;
             # the next loop re-posts the cumulative total so nothing is lost.
             time.sleep(1.0)
+
+    # Final flush so the leader has our complete count even if the last POST raced.
+    for _ in range(10):
+        if _post_partial(worker_id, inside, total):
+            break
+        time.sleep(1.0)
+    print(f"[worker {idx}] done: inside={inside} total={total}", flush=True)
 
 
 if __name__ == "__main__":

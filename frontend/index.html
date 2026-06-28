@@ -39,13 +39,15 @@
 
       <label>Total samples (darts)
         <select id="samples">
-          <option value="2000000">2 million</option>
-          <option value="20000000" selected>20 million</option>
           <option value="100000000">100 million</option>
           <option value="500000000">500 million</option>
+          <option value="1000000000" selected>1 billion</option>
+          <option value="2000000000">2 billion</option>
         </select>
-        <small class="field-note">Split evenly across the workers. More darts =
-          a tighter π estimate and more CPU work.</small>
+        <small class="field-note">Split evenly across the workers. The run finishes
+          once this many darts are thrown — more darts = a tighter π estimate, a
+          longer run, and more CPU work. (1 billion ≈ 30-60s on a few Spot CPUs —
+          enough time to watch it converge and to hit “Kill a worker”.)</small>
       </label>
 
       <button id="launch" class="btn btn-primary">Launch JobSet</button>

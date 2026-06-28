@@ -113,7 +113,9 @@ def _leader_url(path: str) -> str:
 # --------------------------------------------------------------------------- #
 class LaunchRequest(BaseModel):
     workers: int = Field(default=4, ge=1, le=20)
-    total_samples: int = Field(default=20_000_000, ge=10_000, le=2_000_000_000)
+    # Default sized so the run lasts ~30-60s across a few Spot CPUs — long enough to
+    # watch π converge and to hit "Kill a worker" mid-run.
+    total_samples: int = Field(default=1_000_000_000, ge=10_000, le=2_000_000_000)
     max_restarts: int = Field(default=3, ge=1, le=10)
 
 
