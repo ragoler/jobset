@@ -145,3 +145,12 @@ body {
 }
 .pod-kill:hover:not(:disabled) { background: var(--danger); color: #1a0606; }
 .pod-kill:disabled { opacity: .5; cursor: not-allowed; }
+
+/* A pod the user just killed: dim it, outline in danger red, strike the name, and
+   pulse the dot — clear feedback that it's on its way out (whole group restarting)
+   so it isn't clicked again. */
+.pod.killing { opacity: .65; border-color: var(--danger); }
+.pod.killing .pname { text-decoration: line-through; }
+.pod.killing .pstatus { color: var(--danger); }
+.pod.killing .dot { background: var(--danger); animation: kill-pulse 1s ease-in-out infinite; }
+@keyframes kill-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .25; } }

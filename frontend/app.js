@@ -35,6 +35,13 @@ const PI = Math.PI;
 let cfg = { mode: "MOCK", dataBase: HUB_BASE };
 let poller = null;
 let running = false;
+// Pods the user has clicked Kill on — kept in state so the "Killing…" feedback
+// survives the 1.5s poll re-render (otherwise the button looks clickable again
+// before the operator has reacted, inviting double-clicks). Cleared once the whole
+// group restarts (restart count rises) or on a fresh launch.
+const killing = new Set();
+let lastStatus = null; // most recent /status payload, for re-rendering on kill
+let lastRestarts = 0; // detects when a whole-group restart has completed
 
 /* ---- auth + bases ----------------------------------------------------- */
 function jwt() {
@@ -130,26 +137,33 @@ function renderPods(s) {
   pods.forEach((p) => {
     const isLeader = p.role === "leader";
     const ok = p.status === "Running" || p.status === "Succeeded";
+    const isKilling = killing.has(p.pod_name);
     // Only running/pending workers can be killed (the leader is never killable, and
     // a finished worker has no pod to delete).
     const killable =
       !isLeader && (p.status === "Running" || p.status === "Pending") && cfg.mode !== "MOCK";
     const el = document.createElement("div");
-    el.className = `pod ${isLeader ? "leader" : "worker"} ${ok ? "" : "pending"}`;
+    el.className =
+      `pod ${isLeader ? "leader" : "worker"} ${ok ? "" : "pending"} ${isKilling ? "killing" : ""}`;
+    let killBtn = "";
+    if (isKilling) {
+      killBtn = `<button class="pod-kill" disabled>Killing…</button>`;
+    } else if (killable) {
+      killBtn =
+        `<button class="pod-kill" data-pod="${p.pod_name}" ` +
+        `title="Kill this worker — the whole JobSet restarts">Kill</button>`;
+    }
     el.innerHTML =
       `<span class="dot"></span>` +
       `<div class="pmeta">` +
       `<span class="pname" title="${p.pod_name}">${p.pod_name}</span>` +
-      `<span class="psub">${p.role} · ${p.node || "scheduling…"}</span>` +
+      `<span class="psub">${isKilling ? "killing — group restarting…" : p.role + " · " + (p.node || "scheduling…")}</span>` +
       `</div>` +
       `<div class="pright">` +
-      `<span class="pstatus">${p.status || "?"}</span>` +
+      `<span class="pstatus">${isKilling ? "Killing" : p.status || "?"}</span>` +
       `<span class="page">${p.elapsed_s != null ? p.elapsed_s.toFixed(0) + "s" : "—"}</span>` +
       `</div>` +
-      (killable
-        ? `<button class="pod-kill" data-pod="${p.pod_name}" ` +
-          `title="Kill this worker — the whole JobSet restarts">Kill</button>`
-        : "");
+      killBtn;
     els.pods.appendChild(el);
   });
 }
@@ -163,9 +177,14 @@ async function poll() {
     ]);
     if (sr.ok) {
       const s = await sr.json();
+      const r = s.restarts || 0;
+      // A restart means the old (killed) pods are gone and a fresh group is up —
+      // drop the optimistic "Killing…" flags.
+      if (r > lastRestarts) killing.clear();
+      lastRestarts = r;
+      lastStatus = s;
       renderPods(s);
-      const live = s.exists;
-      els.clear.disabled = !live || cfg.mode === "MOCK";
+      els.clear.disabled = !s.exists || cfg.mode === "MOCK";
     }
     if (pr.ok) renderPi(await pr.json());
   } catch (_) {
@@ -182,6 +201,8 @@ function startPolling() {
 /* ---- actions --------------------------------------------------------- */
 async function launch() {
   els.launch.disabled = true;
+  killing.clear();
+  lastRestarts = 0;
   els.phase.textContent = "· replacing any previous run, then creating JobSet…";
   try {
     const body = JSON.stringify({
@@ -204,6 +225,10 @@ async function launch() {
 }
 
 async function killWorker(podName) {
+  // Optimistically flag the pod so it renders as "Killing…" immediately and stays
+  // that way across polls — no double-clicking while the operator reacts.
+  killing.add(podName);
+  if (lastStatus) renderPods(lastStatus);
   els.phase.textContent =
     `· killed ${podName} — the JobSet operator now recreates the WHOLE group ` +
     `(takes a few seconds on Spot; the restart count will tick up)…`;
@@ -217,6 +242,9 @@ async function killWorker(podName) {
       throw new Error(d.detail || `kill failed: ${r.status}`);
     }
   } catch (e) {
+    // The kill didn't take — clear the flag so the user can try again.
+    killing.delete(podName);
+    if (lastStatus) renderPods(lastStatus);
     els.phase.textContent = `· ${e.message}`;
   }
 }
