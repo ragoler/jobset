@@ -46,6 +46,10 @@ let lastRestarts = 0; // detects when a whole-group restart has completed
 // Convergence curve: accumulated {x: samples thrown, y: |estimate - π|} points,
 // gathered straight from the /pi poll (no backend/metrics needed). Reset per run.
 const errSeries = [];
+// LIVE only: the browser talks to the feature's Gateway directly, and the global LB
+// is PROGRAMMED minutes after the Deployment is ready. Until the data path actually
+// serves, we show a "provisioning…" state instead of letting a click "Failed to fetch".
+let dataReady = false;
 
 /* ---- auth + bases ----------------------------------------------------- */
 function jwt() {
@@ -267,8 +271,65 @@ function renderPods(s) {
   });
 }
 
+/* ---- data-plane readiness gate --------------------------------------- */
+// Re-resolve the Gateway IP (it programs minutes after the Deployment is ready) and
+// probe the data path itself. Sets dataReady. LIVE only; MOCK is handled separately.
+async function refreshDataPlane() {
+  const override = new URLSearchParams(location.search).get("api");
+  try {
+    const r = await fetch(`${HUB_BASE}/config`, { headers: hubHeaders() });
+    if (r.ok) {
+      const c = await r.json();
+      cfg.mode = c.mode || "LIVE";
+      if (cfg.mode === "MOCK") {
+        dataReady = false;
+        return;
+      }
+      // Empty when the Hub has no PROGRAMMED gateway yet (get_gateway_ip returns "").
+      cfg.dataBase = override || (c.gateway_ip ? `http://${c.gateway_ip}` : "");
+    } else {
+      cfg.mode = "LIVE";
+      cfg.dataBase = override || location.origin; // standalone (no Hub)
+    }
+  } catch (_) {
+    cfg.mode = "LIVE";
+    cfg.dataBase = override || location.origin;
+  }
+  if (!cfg.dataBase) {
+    dataReady = false; // gateway IP not assigned yet
+    return;
+  }
+  // An assigned IP can still be minutes from serving — probe the real path.
+  try {
+    const h = await fetch(`${cfg.dataBase}/healthz`, { headers: dataHeaders() });
+    dataReady = h.ok;
+  } catch (_) {
+    dataReady = false;
+  }
+}
+
+function renderProvisioning() {
+  els.mode.textContent = cfg.mode;
+  els.mode.className = "badge badge-live";
+  els.launch.disabled = true;
+  els.launch.textContent = "Provisioning…";
+  els.clear.disabled = true;
+  els.phase.textContent = cfg.dataBase
+    ? "· provisioning the load balancer — this can take a few minutes…"
+    : "· waiting for the gateway IP…";
+}
+
 /* ---- polling --------------------------------------------------------- */
 async function poll() {
+  // LIVE hits the Gateway directly — gate on it actually serving before we fetch or
+  // enable anything, so the first click can't land on a not-yet-programmed gateway.
+  if (cfg.mode !== "MOCK" && !dataReady) {
+    await refreshDataPlane();
+    if (!dataReady) {
+      renderProvisioning();
+      return;
+    }
+  }
   try {
     const [sr, pr] = await Promise.all([
       fetch(dataUrl("/status"), { headers: dataHeaders() }),
